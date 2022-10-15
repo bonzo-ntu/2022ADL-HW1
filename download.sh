@@ -47,5 +47,5 @@ kaggle_ckpt="https://www.dropbox.com/s/5x8are4tyrlgtqj/kaggle.ckpt?dl=1"
 wget ${kaggle_ckpt} -O ./ckpt/intent/kaggle.ckpt
 
 # slot
-kaggle_ckpt=""
+kaggle_ckpt="https://www.dropbox.com/s/fh2yzmil46p65qs/kaggle.ckpt?dl=1"
 wget ${kaggle_ckpt} -O ./ckpt/slot/kaggle.ckpt
