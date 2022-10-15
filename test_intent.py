@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 
 import torch
+from tqdm import tqdm
 
 from dataset import SeqClsDataset
 from model import SeqClassifier
@@ -18,38 +19,52 @@ def main(args):
     intent_idx_path = args.cache_dir / "intent2idx.json"
     intent2idx: Dict[str, int] = json.loads(intent_idx_path.read_text())
 
-    data = json.loads(args.test_file.read_text())
-    dataset = SeqClsDataset(data, vocab, intent2idx, args.max_len)
-    # TODO: crecate DataLoader for test dataset
-
-    embeddings = torch.load(args.cache_dir / "embeddings.pt")
-
-    model = SeqClassifier(
-        embeddings,
-        args.hidden_size,
-        args.num_layers,
-        args.dropout,
-        args.bidirectional,
-        dataset.num_classes,
+    # TODO: crecate test dataset
+    with open(args.test_file, "r") as f:
+        test_data = json.load(f)
+    test_dataset = SeqClsDataset(test_data, vocab, intent2idx, args.max_len)
+    # TODO: create DataLoader for test dataset
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, shuffle=False, batch_size=150, collate_fn=test_dataset.collate_fn
     )
+
+    ckpt = torch.load(args.ckpt_path) if hasattr(args, "ckpt_path") else torch.load(args.ckpt_dir / args.ckpt)
+    # load weights into model
+    # TODO: implement main function
+    embeddings = torch.load(args.cache_dir / "embeddings.pt")
+    model = SeqClassifier(
+        embeddings=embeddings,
+        hidden_size=args.hidden_size,
+        dropout=args.dropout,
+        num_layers=args.num_layers,
+        bidirectional=args.bidirectional,
+        num_class=150,
+        batch_size=args.batch_size,
+    )
+    if ("cuda" not in args.device.type) and torch.cuda.is_available():
+        args.device = torch.device("cuda:0")
+    device = args.device
+    print(f"using device {device}")
+    model.to(device)
+    model.load_state_dict(ckpt)
     model.eval()
 
-    ckpt = torch.load(args.ckpt_path)
-    # load weights into model
-
     # TODO: predict dataset
-
     # TODO: write prediction to file (args.pred_file)
+    ids = [td["id"] for td in test_data]
+    with open(args.pred_file, "w") as f:
+        f.write("id,intent\n")
+        with torch.no_grad():
+            for i, test in enumerate(tqdm(test_loader)):
+                out = model(test["text"].to(device))
+                _, preds = torch.max(out, 1)
+                for j, pred in enumerate(preds):
+                    f.write(f"{ids[150*i+j]},{test_dataset.idx2label(pred.item())}\n")
 
 
 def parse_args() -> Namespace:
     parser = ArgumentParser()
-    parser.add_argument(
-        "--test_file",
-        type=Path,
-        help="Path to the test file.",
-        required=True
-    )
+    parser.add_argument("--test_file", type=Path, help="Path to the test file.", required=True)
     parser.add_argument(
         "--cache_dir",
         type=Path,
@@ -57,10 +72,22 @@ def parse_args() -> Namespace:
         default="./cache/intent/",
     )
     parser.add_argument(
+        "--ckpt_dir",
+        type=Path,
+        help="Directory to save the model file.",
+        default="./ckpt/intent/",
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=Path,
+        help="Directory to save the model file.",
+        default="model.ckpt",
+    )
+    parser.add_argument(
         "--ckpt_path",
         type=Path,
-        help="Path to model checkpoint.",
-        required=True
+        help="Directory to save the model file.",
+        default="./ckpt/intent/kaggle.ckpt",
     )
     parser.add_argument("--pred_file", type=Path, default="pred.intent.csv")
 
@@ -76,9 +103,7 @@ def parse_args() -> Namespace:
     # data loader
     parser.add_argument("--batch_size", type=int, default=128)
 
-    parser.add_argument(
-        "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu"
-    )
+    parser.add_argument("--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu")
     args = parser.parse_args()
     return args
 

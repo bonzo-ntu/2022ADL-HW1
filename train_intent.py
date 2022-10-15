@@ -5,10 +5,12 @@ from pathlib import Path
 from typing import Dict
 
 import torch
-from tqdm import trange
+from tqdm import trange, tqdm
 
 from dataset import SeqClsDataset
+from model import SeqClassifier
 from utils import Vocab
+from torch import nn
 
 TRAIN = "train"
 DEV = "eval"
@@ -25,23 +27,82 @@ def main(args):
     data_paths = {split: args.data_dir / f"{split}.json" for split in SPLITS}
     data = {split: json.loads(path.read_text()) for split, path in data_paths.items()}
     datasets: Dict[str, SeqClsDataset] = {
-        split: SeqClsDataset(split_data, vocab, intent2idx, args.max_len)
-        for split, split_data in data.items()
+        split: SeqClsDataset(split_data, vocab, intent2idx, args.max_len) for split, split_data in data.items()
     }
-    # TODO: crecate DataLoader for train / dev datasets
+    # TODO: create DataLoader for train / dev datasets
+    train_loader = torch.utils.data.DataLoader(
+        datasets[TRAIN], batch_size=args.batch_size, shuffle=True, collate_fn=datasets[TRAIN].collate_fn
+    )
+    dev_loader = torch.utils.data.DataLoader(
+        datasets[DEV], batch_size=args.batch_size, shuffle=False, collate_fn=datasets[DEV].collate_fn
+    )
 
     embeddings = torch.load(args.cache_dir / "embeddings.pt")
     # TODO: init model and move model to target device(cpu / gpu)
-    model = None
+    model = SeqClassifier(
+        embeddings=embeddings,
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+        dropout=args.dropout,
+        bidirectional=args.bidirectional,
+        num_class=150,
+        batch_size=args.batch_size,
+    )
+
+    if ("cuda" not in args.device.type) and torch.cuda.is_available():
+        args.device = torch.device("cuda:0")
+    device = args.device
+    print(f"using device {device}")
+    model.to(device)
 
     # TODO: init optimizer
-    optimizer = None
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    epoch_pbar = trange(args.num_epoch, desc="Epoch")
-    for epoch in epoch_pbar:
+    loss_func = nn.CrossEntropyLoss()
+    best_acc = 0.0
+    for epoch in trange(args.num_epoch, desc="Epoch"):
         # TODO: Training loop - iterate over train dataloader and update model weights
+        train_loss, train_acc = 0.0, 0.0
+        valid_loss, valid_acc = 0.0, 0.0
+
+        model.train()
+        for data in tqdm(train_loader):
+            inputs, labels = data["text"].to(device), data["intent"].to(device)
+            optimizer.zero_grad()
+            out = model(inputs)
+            loss = loss_func(out, labels)
+            _, train_pred = torch.max(out, 1)
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+            train_acc += (train_pred == labels).sum().item()
+        else:
+            train_loss /= len(train_loader)
+            train_acc /= len(train_loader.dataset)
+
         # TODO: Evaluation loop - calculate accuracy and save model weights
-        pass
+        with torch.no_grad():
+            model.eval()
+            for dev_data in tqdm(dev_loader):
+                inputs, labels = dev_data["text"].to(device), dev_data["intent"].to(device)
+                out = model(inputs)
+                loss = loss_func(out, labels)
+                _, val_pred = torch.max(out, 1)
+                valid_loss += loss.item()
+                valid_acc += (val_pred == labels).sum().item()
+            else:
+                valid_loss /= len(dev_loader)
+                valid_acc /= len(dev_loader.dataset)
+
+            print(
+                f"Epoch {epoch + 1}: Train Acc: {train_acc}, Train Loss: {train_loss}, \
+                    Val Acc: {valid_acc}, Val Loss: {valid_loss}"
+            )
+            if valid_acc >= best_acc:
+                best_acc = valid_acc
+                torch.save(model.state_dict(), args.ckpt_dir / args.ckpt)
+                print(f"Save model with acc {valid_acc}")
 
     # TODO: Inference on test set
 
@@ -66,6 +127,12 @@ def parse_args() -> Namespace:
         help="Directory to save the model file.",
         default="./ckpt/intent/",
     )
+    parser.add_argument(
+        "--ckpt",
+        type=Path,
+        help="Directory to save the model file.",
+        default="model.ckpt",
+    )
 
     # data
     parser.add_argument("--max_len", type=int, default=128)
@@ -83,9 +150,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--batch_size", type=int, default=128)
 
     # training
-    parser.add_argument(
-        "--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu"
-    )
+    parser.add_argument("--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu")
     parser.add_argument("--num_epoch", type=int, default=100)
 
     args = parser.parse_args()
