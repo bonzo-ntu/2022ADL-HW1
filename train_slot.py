@@ -77,7 +77,7 @@ def main(args):
 
             train_loss += loss.item()
             for j, label in enumerate(labels):
-                train_acc += (train_pred[j].cpu() == label.cpu()).sum().item() == 64
+                train_acc += (train_pred[j].cpu() == label.cpu()).sum().item() == 128
         else:
             train_loss /= len(train_loader)
             train_acc /= len(train_loader.dataset)
@@ -93,7 +93,7 @@ def main(args):
                 valid_loss += loss.item()
 
                 for j, label in enumerate(labels):
-                    valid_acc += (val_pred[j].cpu() == label.cpu()).sum().item() == 64
+                    valid_acc += (val_pred[j].cpu() == label.cpu()).sum().item() == 128
             else:
                 valid_loss /= len(dev_loader)
                 valid_acc /= len(dev_loader.dataset)
