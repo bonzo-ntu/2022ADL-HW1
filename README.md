@@ -1,5 +1,10 @@
 # Sample Code for Homework 1 ADL NTU
 
+## Download
+```shell
+bash ./download.sh
+```
+
 ## Train model
 ```shell
 python train_intent.py --device cuda:0 --ckpt trained_intent.ckpt --dropout 0.25
